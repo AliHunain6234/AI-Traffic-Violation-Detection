@@ -1,0 +1,324 @@
+# AI Traffic Violation Detection System - configuration
+# Every threshold, path and model name lives here. CLI flags (--model, --tracker,
+# --video, --output) override the matching keys at runtime.
+
+# ----------------------------------------------------------------------------
+# Paths
+# ----------------------------------------------------------------------------
+paths:
+  evidence_dir: evidence
+  output_dir: outputs
+  events_csv: outputs/events.csv
+  stats_json: outputs/stats.json          # live counters / FPS, read by the dashboard
+  ground_truth_csv: ground_truth/ground_truth.csv
+  benchmark_json: outputs/benchmark.json  # written by benchmark.py
+  evaluation_json: outputs/evaluation.json  # written by evaluate.py
+
+# ----------------------------------------------------------------------------
+# Input / output video
+# ----------------------------------------------------------------------------
+video:
+  source:                     # file path, rtsp:// / http:// stream URL, or a webcam index like 0; --video overrides
+  frame_skip: 0               # frames to skip between processed frames (0 = all)
+  resize_width:               # downscale for speed; null keeps original size
+  # Real-world time of frame 0. Recorded footage has no wall clock, so every
+  # wall_clock_time is derived as video_start_time + video_timestamp.
+  # null = use the processing time instead.
+  start_time:                 # e.g. "2026-03-14T08:30:00+05:00"
+  rtsp_reconnect_attempts: 5
+  rtsp_reconnect_delay_s: 2.0
+
+output:
+  save_video: true
+  video_name: annotated.mp4
+  live_fps: 10                # playback fps of the annotated file when the source is a live camera
+  codec: mp4v
+  show_window: false          # --show overrides
+  draw_trails: true
+  trail_length: 30
+
+# ----------------------------------------------------------------------------
+# Camera / site (one block per camera; main.py picks one with --camera)
+# Line and signal ROI are written here by tools/define_line.py and
+# tools/define_signal_roi.py. Coordinates are pixels in the ORIGINAL frame.
+# ----------------------------------------------------------------------------
+camera:
+  active: default
+  sites:
+    default:
+      name: "Unnamed intersection"
+      city:
+      province:               # Punjab | Sindh | KP | Balochistan | Islamabad | AJK | GB
+      stop_line: [[2, 625], [1902, 622]] # [[x1, y1], [x2, y2]]
+      direction: negative     # side of the line vehicles travel TOWARD: positive | negative
+      signal_roi:             # [x, y, w, h]
+      # Optional polygon zone(s) for roads without a clear stop line (lane
+      # discipline is weak in many sites). Used in addition to the line.
+      violation_zones: []     # list of polygons: [[[x, y], ...], ...]
+      # Several stop lines, each with ITS OWN signal (use when one camera sees more than one signal).
+      # Created by:  define_line.py --approach NAME   and   define_signal_roi.py --approach NAME
+      # When non-empty it replaces stop_line / signal_roi / direction above. Entry fields:
+      #   {name: left_lanes, stop_line: [[x,y],[x,y]], direction: positive, signal_roi: [x,y,w,h]}
+      approaches: []
+      # Speed calibration written by tools/define_speed.py (null = no speed measurement):
+      #   {method: lines, lines: [[[x,y],[x,y]], [[x,y],[x,y]]], distance_m: 20.0}
+      #   {method: homography, image_points: [[x,y] x4], world_points: [[X,Y] x4]}
+      speed:
+      frame_size: [1920, 1080]
+    bangkok:
+      signal_roi: [165, 1075, 90, 90]
+      signal: {min_pixel_ratio: 0.005}   # small lamp in a handheld clip
+      frame_size: [1080, 1920]
+      stop_line: [[20, 1395], [470, 1395]]
+      direction: positive
+
+# ----------------------------------------------------------------------------
+# Camera-shake compensation. Turn on for a handheld / wobbling camera: every frame is aligned to
+# the first one so stop lines, signal ROIs and speed calibrations stay on the road. Costs ~20 ms per
+# 1080p frame. Not for a camera that is re-aimed or moving (dashcam). Override: --stabilize.
+# ----------------------------------------------------------------------------
+stabilization:
+  enabled: false
+  max_width: 640                   # features are tracked on a downscaled copy
+  min_inliers: 12                  # matching points needed to trust a frame (else the last good alignment is kept)
+  max_shift_frac: 0.30             # larger jumps (fraction of the width) are treated as "camera re-aimed"
+
+# ----------------------------------------------------------------------------
+# Detection
+# ----------------------------------------------------------------------------
+detector:
+  model: yolo26n.pt           # yolo26n/s/m.pt or yolov8n/s.pt - keep configurable
+  device: auto                # auto | cpu | cuda | cuda:0 | mps
+  conf: 0.35
+  iou: 0.5
+  imgsz: 960
+  # auto = OpenVINO on an Intel GPU when one is present (about 2x faster than the CPU and it leaves the CPU free),
+  # else PyTorch. The model is exported once to a <model>_<imgsz>_openvino_model folder. torch | openvino to force.
+  backend: auto
+  half: auto                 # FP16 on GPU only
+  max_det: 300
+  # Classes to keep: COCO ids (2 car, 3 motorcycle, 5 bus, 7 truck) OR class names. With a model you fine-tuned
+  # (see tools/train_detector.py) list names, e.g. [car, motorcycle, bus, truck, rickshaw]; empty = all classes.
+  classes: [2, 3, 5, 7]
+  # Fallback display names for class ids the model does not name itself. A model's own names (every
+  # YOLO .pt carries them, incl. models you fine-tune) always take precedence, so this is rarely needed.
+  class_names:
+    2: car
+    3: motorcycle
+    5: bus
+    7: truck
+
+# ----------------------------------------------------------------------------
+# Tracking (Ultralytics built-in; no custom tracker)
+# ----------------------------------------------------------------------------
+tracker:
+  # bytetrack is ~90 ms/frame cheaper: botsort spends that on camera-motion compensation, which a FIXED
+  # camera does not need. Use botsort for a handheld / moving camera.
+  name: bytetrack             # botsort | bytetrack ; resolves to <name>.yaml
+  persist: true
+  # Optional path to a modified tracker yaml (e.g. to enable BoT-SORT ReID).
+  custom_yaml:
+  # ID healing: a vehicle that loses its ID mid-scene (occlusion) gets its old ID back, so it is
+  # counted once and its speed survives the break. Conservative, but a wrong merge is possible in
+  # dense queues, so it is off until you have checked it on your footage.
+  stitch:
+    enabled: false
+    max_gap_frames: 30             # longest disappearance that can still be healed
+    max_distance_factor: 1.2       # newcomer must be within this x the lost box's larger side of where it should be
+    max_size_ratio: 2.0            # box area may differ by at most this factor
+    edge_margin_frac: 0.03         # tracks starting/ending this close to the frame border are never merged
+    class_groups: [[car, truck, bus, rickshaw, van, pickup, loader], [motorcycle, bicycle]]
+
+# ----------------------------------------------------------------------------
+# Line-crossing logic
+# ----------------------------------------------------------------------------
+crossing:
+  reference_point: bottom_center   # bottom_center | center
+  point_smoothing_frames: 3        # moving average to damp box jitter
+  min_displacement_px: 4           # ignore sign flips smaller than this (jitter)
+  segment_margin_px: 20            # crossing must project onto the segment +/- margin
+  min_track_age_frames: 5          # ignore brand-new tracks (spurious IDs)
+  once_per_id: true                # a track ID can trigger at most one crossing
+  cooldown_frames: 90              # only used when once_per_id is false: min gap between re-triggers
+  state_ttl_frames: 300            # drop per-track state after this many unseen frames
+  # Collapse a "new ID right after an old ID crossed nearby" into one event
+  # (guards against ID fragmentation).
+  dedup_window_frames: 45
+  dedup_radius_px: 80
+  stationary_speed_px: 1.5         # px/frame below which a vehicle counts as stopped
+
+# ----------------------------------------------------------------------------
+# Traffic signal state
+# ----------------------------------------------------------------------------
+signal:
+  classifier: hsv                  # hsv | cnn (cnn: plug-in point, see signal_classifier.py)
+  cnn_weights:
+  smoothing_window: 7              # majority vote over last N frames
+  min_confidence: 0.30             # below this the frame votes "unknown"
+  min_pixel_ratio: 0.02            # coloured pixels / ROI area needed to vote. A small lamp in a wide ROI needs less:
+                                   # override it per camera (camera.sites.<id>.signal) instead of lowering it here
+  mask_vehicles: true              # vehicles overlapping the ROI cannot vote (a yellow taxi is not a yellow lamp)
+  # State used for a crossing = state `lag_frames` earlier, to compensate for
+  # the smoothing delay at transitions.
+  lag_frames: 3
+  # An occluded / unreadable signal suppresses violations (never guess).
+  unknown_policy: suppress         # suppress | treat_as_green
+  history_frames: 300
+  # OpenCV HSV: H 0-179, S/V 0-255.
+  hsv:
+    red:
+      - {lower: [0, 120, 150], upper: [10, 255, 255]}
+      - {lower: [170, 120, 150], upper: [179, 255, 255]}
+    yellow:
+      - {lower: [15, 120, 150], upper: [35, 255, 255]}
+    green:
+      - {lower: [40, 80, 120], upper: [95, 255, 255]}
+  morph_kernel: 3
+
+# ----------------------------------------------------------------------------
+# Event classification
+# ----------------------------------------------------------------------------
+events:
+  # signal state at crossing -> event type
+  mapping:
+    red: red_light_violation
+    yellow: amber_crossing
+    green: legal_crossing
+  flagged: [red_light_violation, amber_crossing, overspeed]   # get an evidence package
+  evidence_for_legal_crossing: false
+
+# ----------------------------------------------------------------------------
+# Evidence package
+# ----------------------------------------------------------------------------
+evidence:
+  buffer_frames: 60                # ring buffer for "before" frames
+  frames_before: 15                # how far back the "before" frame is
+  frames_after: 15                 # how far ahead the "after" frame is
+  jpeg_quality: 92
+  vehicle_crop_padding: 0.10       # fraction of box size
+  best_crop_history: 30            # frames kept per track to pick the sharpest crop
+  overlay:
+    draw_box: true
+    draw_line: true
+    draw_signal: true
+    draw_timestamp: true
+    font_scale: 0.6
+  write_manifest: true             # SHA-256 per file in evidence/<id>/manifest.json
+
+# ----------------------------------------------------------------------------
+# License plate reading (two-stage: detect -> crop -> enhance -> OCR)
+# ----------------------------------------------------------------------------
+plate:
+  enabled: true
+  detector_model:                  # path to a fine-tuned plate detector; null = placeholder
+  detector_conf: 0.30
+  # Fallback when no plate model exists: OCR the lower part of the vehicle crop.
+  fallback_to_vehicle_crop: false
+  fallback_region: [0.55, 1.0]     # vertical band of the vehicle crop
+  upscale_factor: 3
+  denoise: true
+  clahe: true
+  ocr:
+    languages: [en]
+    gpu: auto
+    allowlist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789- "
+    min_conf: 0.30
+  # Post-processing for Pakistani formats (regex per province). Empty list = off.
+  format_patterns: []
+  min_plate_px_width: 40           # skip crops too small to read
+
+# ----------------------------------------------------------------------------
+# Speed estimation and per-class speed limits
+# Active only for cameras that have a `speed:` calibration (see tools/define_speed.py):
+#   method "lines":       two lines a known distance apart; speed = distance / time between them
+#   method "homography":  4 road points with real-world metres; speed = ground-plane displacement / time
+# The limits below are EXAMPLES. Set them to the limits that apply on your road.
+# Estimates are for human review; they are not calibrated enforcement-grade measurements.
+# ----------------------------------------------------------------------------
+speed:
+  enabled: true
+  default_limit_kmh: 60
+  limits_kmh:                      # keys are detector class names (add `rickshaw` once you have a model for it)
+    car: 60
+    motorcycle: 60
+    bus: 50
+    truck: 50
+    rickshaw: 40
+  tolerance_kmh: 3                 # flag only above limit + tolerance (covers measurement error)
+  max_plausible_kmh: 200           # estimates above this are discarded as tracking glitches
+  smoothing_frames: 3              # moving average on the image point before measuring
+  line_deadband_px: 3              # lines method: ignore jitter this close to a line
+  line_margin_px: 20               # lines method: crossing must project onto the segment +/- margin
+  min_travel_seconds: 0.15         # lines method: shorter A-to-B times are discarded
+  window_seconds: 1.0              # homography: window used for each instantaneous speed
+  min_samples: 8                   # homography: valid samples in the region before a measurement counts
+  min_travel_m: 3.0                # homography: minimum distance covered inside the region
+  absent_frames: 6                 # homography: finalize a track after this many unseen frames
+
+# ----------------------------------------------------------------------------
+# Logging
+# ----------------------------------------------------------------------------
+logging:
+  level: INFO
+  file: outputs/run.log
+  csv_columns:
+    - event_id
+    - track_id
+    - vehicle_class
+    - event_type
+    - signal_state
+    - frame_no
+    - video_timestamp
+    - wall_clock_time
+    - confidence
+    - plate_text
+    - plate_conf
+    - evidence_path
+  extra_columns: [camera_id, approach, speed_kmh, limit_kmh]   # appended after the required columns
+  stats_interval_frames: 15        # how often stats.json is refreshed
+
+# ----------------------------------------------------------------------------
+# Evaluation (evaluate.py)
+# ----------------------------------------------------------------------------
+evaluation:
+  frame_tolerance: 15              # +/- frames for a prediction to match a GT event
+  match_event_type: true
+  ground_truth_columns: [frame_no, vehicle_description, event_type]
+
+# ----------------------------------------------------------------------------
+# Benchmark (benchmark.py)
+# ----------------------------------------------------------------------------
+benchmark:
+  models: [yolov8n.pt, yolo26n.pt]
+  trackers: [botsort, bytetrack]
+  warmup_frames: 30
+  max_frames:                      # limit for quick runs; null = whole video
+  save_annotated: false
+
+# ----------------------------------------------------------------------------
+# Dashboard (FastAPI + React)
+# ----------------------------------------------------------------------------
+dashboard:
+  host: 0.0.0.0
+  port: 8000
+  cors_origins: ["http://localhost:5173"]
+  api_token:                       # set to require ?token= / Bearer; use before tunnelling
+  allowed_video_dirs: ["."]        # folders the Live Monitor may start video FILES from
+  allow_config_edit: true          # the Setup page may write lines / ROIs / speed calibration into this config file.
+                                   # Set a dashboard.api_token before exposing the dashboard.
+  allow_live_sources: true         # let the Live Monitor open a webcam (0) or an rtsp:// / http:// camera URL.
+                                   # Set a dashboard.api_token before exposing the dashboard: a URL lets the server
+                                   # connect to any address it can reach.
+  # Speed settings for runs started from the dashboard (the command-line tools keep the values above):
+  realtime_playback: true          # a video file plays at its own speed like a camera; frames the detector cannot keep up with are skipped
+  save_video: false                # skip writing outputs/annotated.mp4 (saves ~80 ms per frame); evidence images are still saved
+  resize_width: 1280               # downscale wide frames before processing (null = keep); lines and ROIs are scaled automatically
+  torch_threads: 3                 # CPU threads for detection (0 = torch default); fewer leaves room for the browser
+  low_priority: true               # run the dashboard process below normal priority so the browser and Windows stay responsive
+  cpu_imgsz: 640                  # detector input size when there is no usable GPU (CUDA / OpenVINO); null = use detector.imgsz. 960 sees small far vehicles better
+  evidence_url_prefix: /evidence
+  mjpeg_fps: 10                    # the picture shown in the browser; detection runs at its own rate
+  mjpeg_max_width: 960             # frames wider than this are shrunk before encoding (lighter for the browser)
+  mjpeg_quality: 70
+  serve_static: dashboard/web/dist # built frontend served by FastAPI (single port for Colab)
+  websocket_push_interval_s: 0.5

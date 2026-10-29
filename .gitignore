@@ -1,0 +1,27 @@
+﻿.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# generated output
+evidence/*
+!evidence/.gitkeep
+outputs/*
+!outputs/.gitkeep
+runs/
+models/
+*.pt
+*.onnx
+*_openvino_model/
+
+# data you add yourself (training frames come from your own videos: keep them out of a public repo)
+datasets/
+*.mp4
+*.avi
+*.mov
+ground_truth/ground_truth.csv
+
+# frontend
+dashboard/web/node_modules/
+dashboard/web/dist/
+

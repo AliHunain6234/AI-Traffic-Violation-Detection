@@ -1,0 +1,21 @@
+# Core pipeline
+ultralytics>=8.4.0        # YOLO26 / YOLOv8, built-in BoT-SORT + ByteTrack
+opencv-python>=4.8
+numpy>=1.24
+easyocr>=1.7
+pandas>=2.0
+ruamel.yaml>=0.18         # config round-trip (keeps comments)
+lap>=0.5.12               # tracker assignment (BoT-SORT / ByteTrack)
+psutil>=5.9               # CPU load shown on the Live monitor
+openvino>=2024.0          # optional: runs the detector on an Intel GPU (detector.backend: auto)
+
+# Dashboard backend
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+reportlab>=4.0            # PDF violation report
+
+# Tests
+pytest>=8.0
+
+# Colab tunnel (optional): pip install pyngrok  or use cloudflared

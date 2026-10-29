@@ -1,0 +1,12 @@
+# Ground-truth template for evaluate.py. Copy to ground_truth/ground_truth.csv and fill it in.
+# One row per crossing you can SEE in the video (watch it frame by frame in VLC / the annotated video).
+#   frame_no            frame where the vehicle's wheels (bottom of the vehicle) touch the stop line
+#   vehicle_description free text, e.g. "white Suzuki Alto, left lane" (used only for reporting)
+#   event_type          red_light_violation | amber_crossing | legal_crossing | overspeed
+#                       (overspeed: frame where the vehicle leaves the measured zone / passes line B;
+#                        only list vehicles you KNOW were over the limit, e.g. from a radar gun or a known-speed test run)
+# Lines starting with # are ignored. Delete the example rows below.
+frame_no,vehicle_description,event_type
+# 412,white car left lane,red_light_violation
+# 655,red motorcycle two riders,amber_crossing
+# 790,blue bus right lane,legal_crossing
